@@ -1,0 +1,174 @@
+
+
+//////////////////////////	_____________			
+// Evolving Trumpet FX ///	_____________			
+////////////////////////// 	_____________			
+
+				/////////////////////////
+				//by Greg Hammontree/////
+				/////////////////////////
+
+// 		     ,,,            //\
+//   o-------------------{(  |      
+//	    (__|||_____)      \\/
+//		     ```
+
+
+
+
+(
+s.options.memSize = 8192 * 64;
+s.waitForBoot({
+	var volStep = 1/20, wetStep = 1/10;
+	~currentVol = 0.5;
+	~currentWet = 0.5;
+
+
+
+	/////////////////////
+	// BUSES & GROUPS //
+	////////////////////
+
+	~trumpetBus = Bus.audio(s, 2);
+	~delayBus = Bus.audio(s, 2);
+	~sfxInputBus = Bus.audio(s, 2);
+
+	~grpIn = Group.new;
+	~grpFX = Group.after(~grpIn);
+	~grpSFX = Group.after(~grpFX);
+
+
+
+	////////////////
+	// SYNTH DEFS //
+	////////////////
+
+	SynthDef(\liveTrumpet, { |out=0|
+		var sig = SoundIn.ar(0);
+		sig = HPF.ar(sig, 150);
+		sig = BPeakEQ.ar(sig, 2000, 1.0, 2);
+		sig = Compander.ar(sig, sig, -45.dbamp, 10, 1, 0.01, 0.1);   //gate
+		sig = Compander.ar(sig, sig, -20.dbamp, 1, 0.33, 0.01, 0.2); // compressor
+		Out.ar(out, sig ! 2);
+	}).add;
+
+	SynthDef(\reverb, { |in, out=0|
+		var sig = In.ar(in, 2);
+		var rev = FreeVerb2.ar(sig[0], sig[1], 1.0, 0.98, 0.4);
+		Out.ar(out, rev * 0.08);
+	}).add;
+
+	SynthDef(\doubleDelay, { |in, out=0|
+		var sig = In.ar(in, 2);
+		var d1 = CombC.ar(sig, 1.0, [0.3, 0.7], 16.0);
+		var d2 = CombC.ar(sig, 4.0, [2.0, 4.0], 16.0);
+		Out.ar(out, (d1 + d2) * 0.6);
+	}).add;
+
+	SynthDef(\mixer, { |amp=0.5, wet=0.5|
+		var drySig = In.ar(~trumpetBus, 2);
+		var wetSig = In.ar(~delayBus, 2);
+		var mixed = XFade2.ar(drySig, wetSig, (wet * 2) - 1);
+		var final = mixed * amp;
+		Out.ar(~sfxInputBus, final);
+		Out.ar(0, final);
+	}).add;
+
+
+	///////////////////////
+	// SPECIAL SynthDefs //
+	///////////////////////
+
+	SynthDef(\sfx_comb, { |in, out=0, atk=30, sus=30, rel=30|
+		var sig = In.ar(in, 2), env = EnvGen.kr(Env.linen(atk, sus, rel, 1, \sine), 1, doneAction: 2);
+		var fx = CombC.ar(sig, 0.2, SinOsc.kr(0.01).range(0.01, 0.15), 6.0);
+		Out.ar(out, fx * env * 0.5);
+	}).add;
+
+	SynthDef(\sfx_gran, { |in, out=0, atk=30, sus=30, rel=30|
+		var sig = In.ar(in, 2), env = EnvGen.kr(Env.linen(atk, sus, rel, 1, \sine), 1, doneAction: 2);
+		var fx = PitchShift.ar(sig, 0.8, 1.0, 0.0, 0.6);
+		Out.ar(out, fx * env);
+	}).add;
+
+	SynthDef(\sfx_chop, { |in, out=0, atk=30, sus=30, rel=30|
+		var sig = In.ar(in, 2), env = EnvGen.kr(Env.linen(atk, sus, rel, 1, \sine), 1, doneAction: 2);
+		var chop = sig * LFPulse.kr(LFNoise0.kr(0.2).range(1, 8), 0, 0.4).lag(0.05);
+		Out.ar(out, chop * env);
+	}).add;
+
+	SynthDef(\sfx_shimmer, { |in, out=0, atk=30, sus=30, rel=30|
+		var sig = In.ar(in, 2), env = EnvGen.kr(Env.linen(atk, sus, rel, 1, \sine), 1, doneAction: 2);
+		var shim = (PitchShift.ar(sig, 0.15, 2.0) * 0.5) + (PitchShift.ar(sig, 0.15, 0.5) * 0.5);
+		shim = BPF.ar(shim, LFNoise1.kr(0.05).range(500, 3000), 1.0);
+		Out.ar(out, shim * env * 1.2);
+	}).add;
+
+	s.sync;
+
+
+
+     //////////
+	// Nodes //
+	///////////
+
+	~input = Synth(\liveTrumpet, [\out, ~trumpetBus], ~grpIn);
+	~reverb = Synth(\reverb, [\in, ~trumpetBus, \out, 0], ~grpFX);
+	~delays = Synth(\doubleDelay, [\in, ~trumpetBus, \out, ~delayBus], ~grpFX);
+	~mixer = Synth(\mixer, [\amp, ~currentVol, \wet, ~currentWet], ~grpFX, addAction: \addAfter);
+
+
+
+    //////////////////
+	// TDEF section //
+	//////////////////
+
+	Tdef(\sfx_engine, {
+		var effects = [\sfx_comb, \sfx_gran, \sfx_chop, \sfx_shimmer];
+		loop {
+			effects.scramble.do { |fxName|
+				var totalTime = 90, fadeTime = 30, overlap = rrand(10.0, 40.0);
+
+				("ACTIVE EFFECT: " ++ fxName.asString.toUpper).postln;				
+
+				Synth(fxName, [\in, ~sfxInputBus, \out, 0, \atk, fadeTime, \sus, 30, \rel, fadeTime], ~grpSFX);
+				(totalTime - overlap).wait;
+			}
+		}
+	}).play;
+
+
+
+    ////////
+	// UI //
+	////////
+
+	{
+		var win = Window("Trumpet Console", Rect(200, 200, 350, 250)).front;
+		win.alwaysOnTop = true;
+		~volSlider = Slider(win, Rect(70, 45, 40, 150)).value_(~currentVol).background_(Color.grey(0.8))
+			.action_({ |sl| ~currentVol = sl.value; ~mixer.set(\amp, ~currentVol); });
+		~wetSlider = Slider(win, Rect(220, 45, 40, 150)).value_(~currentWet).background_(Color.grey(0.8))
+			.action_({ |sl| ~currentWet = sl.value; ~mixer.set(\wet, ~currentWet); });
+
+		StaticText(win, Rect(50, 20, 80, 20)).string_("VOL (+/-)").align_(\center);
+		StaticText(win, Rect(180, 20, 120, 20)).string_("WET (* / /)").align_(\center);
+
+		win.view.keyDownAction = { |v, char|
+			case
+			{ char == $+ } { ~currentVol = (~currentVol + volStep).clip(0,1); ~volSlider.valueAction_(~currentVol) }
+			{ char == $- } { ~currentVol = (~currentVol - volStep).clip(0,1); ~volSlider.valueAction_(~currentVol) }
+			{ char == $* } { ~currentWet = (~currentWet + wetStep).clip(0,1); ~wetSlider.valueAction_(~currentWet) }
+			{ char == $/ } { ~currentWet = (~currentWet - wetStep).clip(0,1); ~wetSlider.valueAction_(~currentWet) };
+		};
+	}.defer;
+
+	"Get Ambient!".postln;
+});
+)
+
+
+
+s.meter;
+s.record;
+s.stopRecording;
